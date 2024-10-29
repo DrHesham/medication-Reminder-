@@ -1,0 +1,366 @@
+import React, { useState, useEffect } from 'react';
+import { Bell, Edit2, Trash2, Save } from 'lucide-react';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Button } from '@/components/ui/button';
+import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+
+const MedicationReminder = () => {
+  const [reminders, setReminders] = useState([]);
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [reminderToDelete, setReminderToDelete] = useState(null);
+  const [formData, setFormData] = useState({
+    patientName: '',
+    medicationName: '',
+    dosage: '',
+    medicationTime: ''
+  });
+  const [editingId, setEditingId] = useState(null);
+  const [activeReminders, setActiveReminders] = useState(new Set());
+  const [notificationAudio, setNotificationAudio] = useState(null);
+
+  // Initialize audio on component mount
+  useEffect(() => {
+    const audio = new Audio('/notification-sound.mp3');
+    audio.loop = true;
+    setNotificationAudio(audio);
+    return () => {
+      audio.pause();
+      audio.currentTime = 0;
+    };
+  }, []);
+
+  // Load saved reminders on mount
+  useEffect(() => {
+    const savedReminders = localStorage.getItem('medicationReminders');
+    if (savedReminders) {
+      setReminders(JSON.parse(savedReminders));
+    }
+  }, []);
+
+  // Set up notification checking interval
+  useEffect(() => {
+    const checkAndNotify = () => {
+      const now = new Date();
+      const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+      
+      reminders.forEach(reminder => {
+        // Create a unique key for today's reminder
+        const todayKey = `${reminder.id}-${now.toDateString()}`;
+        
+        if (reminder.time === currentTime && !activeReminders.has(todayKey)) {
+          // Play alarm sound
+          if (notificationAudio) {
+            notificationAudio.play().catch(e => console.log('Audio playback failed:', e));
+          }
+
+          // Show browser notification
+          if (Notification.permission === "granted") {
+            const notification = new Notification(`وقت الدواء! ${reminder.patient}`, {
+              body: `حان وقت أخذ ${reminder.medication} - الجرعة: ${reminder.dosage}`,
+              icon: '/medication-icon.png',
+              tag: todayKey,
+              requireInteraction: true
+            });
+
+            // Stop alarm when notification is clicked
+            notification.onclick = () => {
+              if (notificationAudio) {
+                notificationAudio.pause();
+                notificationAudio.currentTime = 0;
+              }
+              notification.close();
+            };
+          } else {
+            // Fallback to alert if notifications aren't permitted
+            alert(`تذكير: حان وقت أخذ ${reminder.medication} لـ ${reminder.patient}\nالجرعة: ${reminder.dosage}`);
+          }
+
+          // Show in-app alert
+          const alertElement = document.createElement('div');
+          alertElement.innerHTML = `
+            <div class="fixed top-4 right-4 p-4 bg-blue-500 text-white rounded shadow-lg z-50">
+              <p class="font-bold">تذكير بموعد الدواء</p>
+              <p>${reminder.medication} لـ ${reminder.patient}</p>
+              <button class="mt-2 px-4 py-1 bg-white text-blue-500 rounded" onclick="this.parentElement.remove(); notificationAudio.pause();">
+                إغلاق
+              </button>
+            </div>
+          `;
+          document.body.appendChild(alertElement);
+
+          // Mark reminder as active for today
+          setActiveReminders(prev => new Set([...prev, todayKey]));
+        }
+      });
+    };
+
+    // Check every minute
+    const interval = setInterval(checkAndNotify, 60000);
+    // Also check immediately
+    checkAndNotify();
+
+    return () => clearInterval(interval);
+  }, [reminders, activeReminders, notificationAudio]);
+
+  // Request notification permission
+  useEffect(() => {
+    if (Notification.permission === "default") {
+      Notification.requestPermission();
+    }
+  }, []);
+
+  const saveReminders = (newReminders) => {
+    localStorage.setItem('medicationReminders', JSON.stringify(newReminders));
+    setReminders(newReminders);
+  };
+
+  const handleInputChange = (e) => {
+    setFormData({
+      ...formData,
+      [e.target.name]: e.target.value
+    });
+  };
+
+  const resetForm = () => {
+    setFormData({
+      patientName: '',
+      medicationName: '',
+      dosage: '',
+      medicationTime: ''
+    });
+    setEditingId(null);
+  };
+
+  const addReminder = () => {
+    const { patientName, medicationName, dosage, medicationTime } = formData;
+    
+    if (!patientName || !medicationName || !dosage || !medicationTime) {
+      alert("الرجاء ملء جميع الحقول");
+      return;
+    }
+
+    const newReminder = {
+      id: Date.now(),
+      patient: patientName,
+      medication: medicationName,
+      dosage,
+      time: medicationTime
+    };
+
+    saveReminders([...reminders, newReminder]);
+    alert("تم إضافة التذكير بنجاح");
+    resetForm();
+  };
+
+  const startEditing = (id) => {
+    const reminder = reminders.find(r => r.id === id);
+    if (reminder) {
+      setFormData({
+        patientName: reminder.patient,
+        medicationName: reminder.medication,
+        dosage: reminder.dosage,
+        medicationTime: reminder.time
+      });
+      setEditingId(id);
+    }
+  };
+
+  const saveEdit = () => {
+    const { patientName, medicationName, dosage, medicationTime } = formData;
+    
+    if (!patientName || !medicationName || !dosage || !medicationTime) {
+      alert("الرجاء ملء جميع الحقول");
+      return;
+    }
+
+    const updatedReminders = reminders.map(reminder => 
+      reminder.id === editingId
+        ? {
+            ...reminder,
+            patient: patientName,
+            medication: medicationName,
+            dosage,
+            time: medicationTime
+          }
+        : reminder
+    );
+
+    saveReminders(updatedReminders);
+    alert("تم تحديث التذكير بنجاح");
+    resetForm();
+  };
+
+  const initiateDelete = (reminder) => {
+    setReminderToDelete(reminder);
+    setShowDeleteDialog(true);
+  };
+
+  const confirmDelete = () => {
+    if (reminderToDelete) {
+      const updatedReminders = reminders.filter(reminder => reminder.id !== reminderToDelete.id);
+      saveReminders(updatedReminders);
+      alert("تم حذف التذكير بنجاح");
+      
+      if (editingId === reminderToDelete.id) {
+        resetForm();
+      }
+    }
+    setShowDeleteDialog(false);
+    setReminderToDelete(null);
+  };
+
+  return (
+    <div className="p-4 bg-gray-50 min-h-screen" dir="rtl">
+      <div className="max-w-2xl mx-auto">
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-center text-primary text-2xl">تذكير بالأدوية</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4">
+              <div>
+                <Label htmlFor="patientName">اسم المريض:</Label>
+                <Input
+                  id="patientName"
+                  name="patientName"
+                  value={formData.patientName}
+                  onChange={handleInputChange}
+                  placeholder="أدخل اسم المريض"
+                />
+              </div>
+
+              <div>
+                <Label htmlFor="medicationName">اسم الدواء:</Label>
+                <Input
+                  id="medicationName"
+                  name="medicationName"
+                  value={formData.medicationName}
+                  onChange={handleInputChange}
+                  placeholder="أدخل اسم الدواء"
+                />
+              </div>
+
+              <div>
+                <Label htmlFor="dosage">الجرعة:</Label>
+                <Input
+                  id="dosage"
+                  name="dosage"
+                  value={formData.dosage}
+                  onChange={handleInputChange}
+                  placeholder="مثال: حبة واحدة"
+                />
+              </div>
+
+              <div>
+                <Label htmlFor="medicationTime">وقت أخذ الدواء:</Label>
+                <Input
+                  type="time"
+                  id="medicationTime"
+                  name="medicationTime"
+                  value={formData.medicationTime}
+                  onChange={handleInputChange}
+                />
+              </div>
+
+              {editingId ? (
+                <div className="flex gap-2">
+                  <Button 
+                    className="flex-1"
+                    onClick={saveEdit}
+                  >
+                    <Save className="ml-2 h-4 w-4" />
+                    حفظ التعديلات
+                  </Button>
+                  <Button 
+                    variant="outline"
+                    onClick={resetForm}
+                  >
+                    إلغاء
+                  </Button>
+                </div>
+              ) : (
+                <Button 
+                  className="w-full"
+                  onClick={addReminder}
+                >
+                  <Bell className="ml-2 h-4 w-4" />
+                  إضافة تذكير
+                </Button>
+              )}
+            </div>
+
+            <div className="mt-8">
+              <h2 className="text-xl font-semibold mb-4">التذكيرات المضافة:</h2>
+              <div className="space-y-2">
+                {reminders.sort((a, b) => (
+                  new Date('1970/01/01 ' + a.time) - new Date('1970/01/01 ' + b.time)
+                )).map((reminder) => (
+                  <div key={reminder.id} className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
+                    <div>
+                      <p className="font-medium">{reminder.patient}</p>
+                      <p className="text-sm text-gray-600">
+                        {reminder.medication} - الجرعة: {reminder.dosage} - الوقت: {reminder.time}
+                      </p>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => startEditing(reminder.id)}
+                      >
+                        <Edit2 className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        onClick={() => initiateDelete(reminder)}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>تأكيد الحذف</AlertDialogTitle>
+              <AlertDialogDescription>
+                هل أنت متأكد من حذف هذا التذكير؟
+                {reminderToDelete && (
+                  <div className="mt-2">
+                    <p>المريض: {reminderToDelete.patient}</p>
+                    <p>الدواء: {reminderToDelete.medication}</p>
+                    <p>الوقت: {reminderToDelete.time}</p>
+                  </div>
+                )}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>إلغاء</AlertDialogCancel>
+              <AlertDialogAction onClick={confirmDelete}>تأكيد الحذف</AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      </div>
+    </div>
+  );
+};
+
+export default MedicationReminder;
